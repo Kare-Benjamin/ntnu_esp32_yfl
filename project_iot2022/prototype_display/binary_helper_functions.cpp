@@ -1,0 +1,8 @@
+#ifndef BINARY_HELPER_FUNCTIONS
+#define BINARY_HELPER_FUNCTIONS
+
+
+
+
+
+#endif

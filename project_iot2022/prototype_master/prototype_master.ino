@@ -3,6 +3,9 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include <EEPROM.h>
+#define EEPROM_SIZE 1
+
 
 /* C++ specific */
 #include <bitset>  
@@ -12,8 +15,33 @@
 
 #define MAX_TEMP 64
 #define MAX_BUTTON 2
+#define MASTER_BIT_WIDTH 32
 
 /* Register related */
+#define NODE_ID_MIN_BIT 0
+#define NODE_ID_MAX_BIT 2
+
+#define NODE_PACKET_ID_MIN_BIT 3
+#define NODE_PACKET_ID_MAX_BIT 6
+
+#define NODE_TEMPERATURE_MIN_BIT 7
+#define NODE_TEMPERATURE_MAX_BIT 12
+
+#define NODE_TEMPERATURE_ERROR_MIN_BIT 13
+#define NODE_TEMPERATURE_ERROR_MAX_BIT 13
+
+#define NODE_HUMIDITY_MIN_BIT 14
+#define NODE_HUMIDITY_MAX_BIT 19
+
+#define NODE_HUMIDITY_ERROR_MIN_BIT 20
+#define NODE_HUMIDITY_ERROR_MAX_BIT 20
+
+#define NODE_BUTTON_MIN_BIT 21
+#define NODE_BUTTON_MAX_BIT 21
+
+#define NODE_BUTTON_ERROR_MIN_BIT 22
+#define NODE_BUTTON_ERROR_MAX_BIT 22
+
 #define TEMP_BIT 0 // from 0 to 4
 #define BUTTON_BIT 6  // from 5 to 5
 
@@ -30,7 +58,9 @@ Adafruit_BME280 bme;
 
 int* convert_to_binary(int n, int &i, int*a);
 int array_to_int(int* a, int& i);
- 
+bool fullAdder(bool b1, bool b2, bool& carry);
+std::bitset<MASTER_BIT_WIDTH> bitsetAdd(std::bitset<32>& x, std::bitset<32>& y);
+
 void setup() {
     Serial.begin(115200); // Remember to match this value with the baud rate in your console
     Serial.print("Checking");
@@ -39,6 +69,15 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT);
 
     bool status;
+    
+    /* Initializing EEPROM with EEPROM_SIZE bits*/ 
+
+    EEPROM.begin(0x20);
+    delay(2000);
+
+    EEPROM.write(0, 1);
+    EEPROM.commit();
+
 
     // default settings
     // (you can also pass in a Wire library object like &Wire2)
@@ -50,7 +89,7 @@ void setup() {
 }
 /* 
 void loop() { 
-    std::bitset<16> master_register;
+    std::bitset<MASTER_BIT_WIDTH> master_register;
     master_register = 1;
 
     int i = 0, temperature, temperature_binary, temperature_array_size;
@@ -75,8 +114,14 @@ void loop() {
 
 void loop() { 
 
+    std::bitset<NODE_PACKET_ID_MAX_BIT - NODE_PACKET_ID_MIN_BIT> message_nr_temp(EEPROM.read(0));
+    std::bitset<MASTER_BIT_WIDTH> node_id(1);
+    std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> temperature_error(1);
+    std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> humidity_error(1);
+    std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> button_error(1);
+
     /* Declarations */
-    int i = 0, temperature, temperature_binary, temperature_array_size;
+    int i = 0, temperature_binary, temperature_array_size;
     int cloud_register;
     int button_state;
 
@@ -84,13 +129,35 @@ void loop() {
     button_state = digitalRead(BUTTON_PIN); 
 
     /* Read Temperature */
-    temperature = bme.readTemperature();  
+    std::bitset<MASTER_BIT_WIDTH> temperature(bme.readTemperature());  
+    std::bitset<MASTER_BIT_WIDTH> humidity(bme.readHumidity());
+    std::bitset<MASTER_BIT_WIDTH> message_nr(message_nr_temp.to_ulong());
 
-    /* Make 16-bit master register and initialize with the temperature*/
-    std::bitset<16> master_register(temperature);
+    /* Make MASTER_BIT_WIDTH-bit master register and initialize with the node id*/
+    std::bitset<MASTER_BIT_WIDTH> master_register(node_id);
+
+    /* Write packet id to master register */
+    master_register = bitsetAdd(master_register, message_nr <<= NODE_PACKET_ID_MIN_BIT);
+
+    /* Write temperature to master register */
+    master_register = bitsetAdd(master_register, temperature <<= NODE_TEMPERATURE_MIN_BIT );
+
+    /* Write temperature error to master register */
+    master_register ^= (temperature_error.to_ulong() << (NODE_TEMPERATURE_ERROR_MIN_BIT ));
+
+    /* Write humidity to master register */
+    master_register = bitsetAdd(master_register, humidity <<= NODE_HUMIDITY_MIN_BIT );
+
+    /* Write humidity error to master register */
+    master_register ^= (humidity_error.to_ulong() << (NODE_HUMIDITY_ERROR_MIN_BIT ));
 
     /* Write button_state to master register */
-    master_register ^= (button_state << (BUTTON_BIT));
+    master_register ^= (button_state << (NODE_BUTTON_MIN_BIT));
+
+    /* Write button_state error to master register */
+    master_register ^= (button_error.to_ulong() << (NODE_BUTTON_ERROR_MIN_BIT));
+
+    
 
     /* Write to terminal */
     Serial.println("Master register has: ");
@@ -100,7 +167,15 @@ void loop() {
     
     //free(a);
     //*a = NULL;
-    delay(1000);
+    std::cout << "message_nr: " << message_nr_temp << std::endl;
+    message_nr_temp ^= (message_nr_temp << (1));
+    std::cout << "after bitshift: " << message_nr_temp << std::endl;
+    std::cout << "Master message_nr: " << message_nr_temp << std::endl;
+
+    EEPROM.write(0, message_nr_temp.to_ulong());
+    EEPROM.commit();
+
+    delay(3000); // Letting the reciever catch up
 }
 
 /** Converts decimal numbers to binary 
@@ -111,7 +186,7 @@ void loop() {
  * @returns a the converted binary representation as a vector with i elements.
  */
 
-int * convert_to_binary(int n, int &i, static int* a) { 
+int * convert_to_binary(int n, int &i, int* a) { 
 	for (i; n > 0; i++)
 	{
 		a[i] = n % 2;
@@ -136,4 +211,22 @@ int array_to_int(int* a, int& i) {
 		result += (*(a + i)) * pow(10,i);
 	}
 	return result;
+}
+
+bool fullAdder(bool b1, bool b2, bool& carry)
+{
+    bool sum = (b1 ^ b2) ^ carry;
+    carry = (b1 && b2) || (b1 && carry) || (b2 && carry);
+    return sum;
+}
+// Function to add two bitsets
+std::bitset<MASTER_BIT_WIDTH> bitsetAdd(std::bitset<MASTER_BIT_WIDTH>& x, std::bitset<MASTER_BIT_WIDTH>& y)
+{
+    bool carry = false;
+    // bitset to store the sum of the two bitsets
+    std::bitset<MASTER_BIT_WIDTH> ans;
+    for (int i = 0; i < 32; i++) {
+        ans[i] = fullAdder(x[i], y[i], carry);
+    }
+    return ans;
 }
