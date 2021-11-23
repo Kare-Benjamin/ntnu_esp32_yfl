@@ -1,7 +1,7 @@
 #include "prototype_display_declarations.h"
 #include "binary_helper_functions.cpp"
 
-/* C++ specific */
+/* C++ specific */ 
 #include <bitset>  
 #include <iostream>
 
