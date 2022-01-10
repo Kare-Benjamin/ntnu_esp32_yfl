@@ -1,5 +1,4 @@
 #include "prototype_display_declarations.h"
-#include "binary_helper_functions.cpp"
 
 /* C++ specific */ 
 #include <bitset>  
@@ -13,8 +12,8 @@ int binary_bit_to_integer(std::bitset<MASTER_BIT_WIDTH> binary_number, int start
 
 /* CoT Related declarations */
 
-char ssid[] = "ARNardo";
-char password[] =  "A1R2E3K4"; 
+char ssid[] = "Get-2G-22F101";
+char password[] =  "emm5utz3u2"; 
 char server[] = "www.circusofthings.com";
 char order_key[] = "15590"; 
 char token[] = "eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIyMDQ4In0.UJfXNTEHjAK2nywsuIMd8ZaZXGNIxYodu8zwAHwGyTg";
@@ -24,12 +23,15 @@ CircusESP32Lib circusESP32(server,ssid,password);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
  
 void setup() {
+    std::cout << "Setting up oled" << std::endl;
     Serial.begin(115200); // Remember to match this value with the baud rate in your console
     if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
       Serial.println(F("SSD1306 allocation failed"));
       for(;;);
     }
+    std::cout << "Connecting to Wi-Fi" << std::endl;
     circusESP32.begin(); // Let the Circus object set up itself for an SSL/Secure connection
+    std::cout << "Successfully connected to Wi-Fi" << std::endl;
 }
 
 

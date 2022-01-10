@@ -45,10 +45,20 @@
 #define TEMP_BIT 0 // from 0 to 4
 #define BUTTON_BIT 6  // from 5 to 5
 
+/* node ID based on MAC */
+#ifndef TEST_H
+#define TEST_H
+  std::array<uint8_t, 6> NODE_ONE_MAC = {36, 111, 40, 158, 159, 92};
+#endif
+
+/* For sleep */
+#define RATIO_MILIONTH_TO_ONE 1000000  /* Conversion factor for micro seconds to seconds */
+#define SLEEP_DURATION  5        /* Time ESP32 will go to sleep (in seconds) */
+
 /* CoT Related declarations */
 
-char ssid[] = "ARNardo"; // Place your wifi SSID here
-char password[] =  "A1R2E3K4"; // Place your wifi password here
+char ssid[] = "Get-2G-22F101";
+char password[] =  "emm5utz3u2"; 
 char server[] = "www.circusofthings.com";
 char order_key[] = "15590"; // Type the Key of the Circus Signal you want the ESP32 listen to. 
 char token[] = "eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiIyMDQ4In0.UJfXNTEHjAK2nywsuIMd8ZaZXGNIxYodu8zwAHwGyTg"; // Place your token, find it in 'account' at Circus. It will identify you.
@@ -60,8 +70,15 @@ int* convert_to_binary(int n, int &i, int*a);
 int array_to_int(int* a, int& i);
 bool fullAdder(bool b1, bool b2, bool& carry);
 std::bitset<MASTER_BIT_WIDTH> bitsetAdd(std::bitset<32>& x, std::bitset<32>& y);
+int determine_node_id();
+
+/* Boot counter, non volatiles */
+RTC_DATA_ATTR int number_of_sleeps = 0;
+RTC_DATA_ATTR int node_id_non_volatile = determine_node_id();
+RTC_DATA_ATTR int message_number_rtc = 1;
 
 void setup() {
+
     Serial.begin(115200); // Remember to match this value with the baud rate in your console
     Serial.print("Checking");
     circusESP32.begin(); // Let the Circus object set up itself for an SSL/Secure connection
@@ -69,15 +86,6 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT);
 
     bool status;
-    
-    /* Initializing EEPROM with EEPROM_SIZE bits*/ 
-
-    EEPROM.begin(0x20);
-    delay(2000);
-
-    EEPROM.write(0, 1);
-    EEPROM.commit();
-
 
     // default settings
     // (you can also pass in a Wire library object like &Wire2)
@@ -85,6 +93,7 @@ void setup() {
     if (!status) {
      Serial.println("Could not find a valid BME280 sensor, check wiring!");
     while (1);
+    
   }
 }
 /* 
@@ -114,8 +123,8 @@ void loop() {
 
 void loop() { 
 
-    std::bitset<NODE_PACKET_ID_MAX_BIT - NODE_PACKET_ID_MIN_BIT> message_nr_temp(EEPROM.read(0));
-    std::bitset<MASTER_BIT_WIDTH> node_id(1);
+    std::bitset<NODE_PACKET_ID_MAX_BIT - NODE_PACKET_ID_MIN_BIT> message_nr_temp(message_number_rtc);
+    std::bitset<MASTER_BIT_WIDTH> node_id(node_id_non_volatile);
     std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> temperature_error(1);
     std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> humidity_error(1);
     std::bitset<NODE_TEMPERATURE_ERROR_MIN_BIT - NODE_TEMPERATURE_ERROR_MIN_BIT + 1> button_error(1);
@@ -128,7 +137,7 @@ void loop() {
     /* Read button */
     button_state = digitalRead(BUTTON_PIN); 
 
-    /* Read Temperature */
+    /* Read Temperature, Humidity and Preassure */
     std::bitset<MASTER_BIT_WIDTH> temperature(bme.readTemperature());  
     std::bitset<MASTER_BIT_WIDTH> humidity(bme.readHumidity());
     std::bitset<MASTER_BIT_WIDTH> message_nr(message_nr_temp.to_ulong());
@@ -157,25 +166,36 @@ void loop() {
     /* Write button_state error to master register */
     master_register ^= (button_error.to_ulong() << (NODE_BUTTON_ERROR_MIN_BIT));
 
-    
-
     /* Write to terminal */
     Serial.println("Master register has: ");
     std::cout << master_register.to_string('*') << "\n";
     Serial.println(master_register.to_ulong());
     circusESP32.write(order_key,master_register.to_ulong() ,token);
-    
-    //free(a);
-    //*a = NULL;
-    std::cout << "message_nr: " << message_nr_temp << std::endl;
-    message_nr_temp ^= (message_nr_temp << (1));
-    std::cout << "after bitshift: " << message_nr_temp << std::endl;
+
+    /* Increment the message counter in RTC memory by one bitshift */
+    message_number_rtc ^= (message_number_rtc << (1));
     std::cout << "Master message_nr: " << message_nr_temp << std::endl;
 
-    EEPROM.write(0, message_nr_temp.to_ulong());
-    EEPROM.commit();
+    /* Sleep related */
+    ++number_of_sleeps;
+    Serial.println("Deep sleep number: " + String(number_of_sleeps));
+  
+    /* The reason for the wakeup */
+    Serial.print("ESP woke up from sleep: ");
+    std::cout << source_of_wakeup() << std::endl;
 
-    delay(3000); // Letting the reciever catch up
+    /* Setting up the sleep duration */
+    esp_sleep_enable_timer_wakeup(SLEEP_DURATION * RATIO_MILIONTH_TO_ONE);
+    Serial.println("Sleep will last" + String(SLEEP_DURATION) +
+    " Seconds");
+
+    /* Commencing the sleep */
+    Serial.println("Deep Sleep initiated");
+    Serial.flush(); 
+    esp_deep_sleep_start();
+    //delay(5000);
+
+    /* Code ends here, because the ESP32 is in sleep */
 }
 
 /** Converts decimal numbers to binary 
@@ -230,3 +250,59 @@ std::bitset<MASTER_BIT_WIDTH> bitsetAdd(std::bitset<MASTER_BIT_WIDTH>& x, std::b
     }
     return ans;
 }
+
+/* Determines the reason for the ESP32 wakeup.
+ * @return the cause of the wakeup as a string.
+ */
+std::string source_of_wakeup(){
+  esp_sleep_wakeup_cause_t wakeup_source;
+  wakeup_source = esp_sleep_get_wakeup_cause();
+
+  switch(wakeup_source){
+    case ESP_SLEEP_WAKEUP_EXT0 : return "RTC_IO";
+    case ESP_SLEEP_WAKEUP_EXT1 : return "RTC_CNTL";
+    case ESP_SLEEP_WAKEUP_TIMER : return "TIMER";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : return "TIMER";
+    case ESP_SLEEP_WAKEUP_ULP : return "TIMER";
+    default : return "OTHER"; 
+  }
+}
+
+/* Detects the node name based on known IP-addresses.
+ * 
+ */
+
+ int determine_node_id(){
+
+  byte mac_address_hex[6];
+  WiFi.macAddress(mac_address_hex);
+  std::array<uint8_t, 6> mac_address_array;
+  for (int i = 0; i < 6; ++i){
+    mac_address_array[i] = mac_address_hex[i];
+  }
+   
+  Serial.print("We have MAC_ADDRESS");
+  for (int i = 0; i < 6; ++i){
+    Serial.print(mac_address_hex[i]);
+    Serial.print(":");
+  }
+  Serial.println();
+
+  if (mac_address_array == NODE_ONE_MAC){
+    Serial.println("Given node ID 1");
+    return 1;  
+  }
+
+  else {
+    Serial.println("The MAC was not recognised");
+    Serial.println("Given node ID 7");
+    return 7;
+  }
+
+  /*
+  //string mac_address = WiFi.macAddress();
+    switch(mac_address_hex){
+    case NODE_ONE : return 1;
+    default : return 7;
+  }*/
+ }
